@@ -1,0 +1,42 @@
+name: NYT Spelling Bee Scraper
+
+on:
+  schedule:
+    # Run daily at 06:00 UTC (adjust timezone as needed)
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+    # Allow manual triggering
+
+jobs:
+  scrape-and-update:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        
+    - name: Get current date
+      id: date
+      run: echo "date=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
+        
+    - name: Run scraper and save results
+      run: |
+        python scraper.py > answers.json
+        
+    - name: Commit and push if changed
+      uses: stefanzweifel/git-auto-commit-action@v5
+      with:
+        commit_message: 'Update Spelling Bee answers for ${{ steps.date.outputs.date }}'
+        file_pattern: 'answers.json'
+        commit_user_name: 'spelling-bee-bot'
+        commit_user_email: 'bot@spellingbee.com'
