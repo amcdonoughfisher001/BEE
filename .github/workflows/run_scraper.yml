@@ -1,0 +1,101 @@
+name: NYT Spelling Bee Scraper
+
+on:
+  schedule:
+    # Run daily at 6 AM UTC (after NYT publishes new puzzle)
+    - cron: '0 6 * * *'
+  workflow_dispatch:  # Allow manual triggering
+    inputs:
+      force_scrape:
+        description: 'Force scrape even if data exists'
+        required: false
+        default: 'false'
+        type: boolean
+
+permissions:
+  contents: write  # Needed to commit answers.json
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        
+    - name: Cache Python dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+          
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        
+    - name: Run scraper
+      env:
+        FORCE_SCRAPE: ${{ github.event.inputs.force_scrape || 'false' }}
+      run: |
+        python scraper.py
+        
+    - name: Check for changes
+      id: verify-changed-files
+      run: |
+        if [ -n "$(git status --porcelain)" ]; then
+          echo "changed=true" >> $GITHUB_OUTPUT
+        else
+          echo "changed=false" >> $GITHUB_OUTPUT
+        fi
+        
+    - name: Commit and push changes
+      if: steps.verify-changed-files.outputs.changed == 'true'
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add answers.json
+        git commit -m "Update Spelling Bee answers for $(date '+%Y-%m-%d')" || exit 0
+        git push
+        
+    - name: Upload answers as artifact
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: spelling-bee-answers-${{ github.run_number }}
+        path: answers.json
+        retention-days: 30
+        
+    - name: Create summary
+      if: always()
+      run: |
+        echo "## NYT Spelling Bee Scraper Results" >> $GITHUB_STEP_SUMMARY
+        echo "- **Date**: $(date '+%Y-%m-%d %H:%M UTC')" >> $GITHUB_STEP_SUMMARY
+        echo "- **Status**: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+        
+        if [ -f "answers.json" ]; then
+          echo "- **File Updated**: ✅ answers.json" >> $GITHUB_STEP_SUMMARY
+          
+          # Extract today's data if available
+          TODAY=$(date '+%Y-%m-%d')
+          if command -v jq > /dev/null; then
+            LETTERS=$(jq -r --arg date "$TODAY" '.[$date].letters // [] | join(", ")' answers.json 2>/dev/null || echo "N/A")
+            CENTER=$(jq -r --arg date "$TODAY" '.[$date].center_letter // "N/A"' answers.json 2>/dev/null || echo "N/A")
+            PANGRAMS=$(jq -r --arg date "$TODAY" '.[$date].pangrams // [] | length' answers.json 2>/dev/null || echo "N/A")
+            
+            echo "- **Letters**: $LETTERS" >> $GITHUB_STEP_SUMMARY
+            echo "- **Center Letter**: $CENTER" >> $GITHUB_STEP_SUMMARY
+            echo "- **Pangrams Count**: $PANGRAMS" >> $GITHUB_STEP_SUMMARY
+          fi
+        else
+          echo "- **File Updated**: ❌ No answers.json found" >> $GITHUB_STEP_SUMMARY
+        fi
