@@ -29,6 +29,8 @@ jobs:
       - name: Run scraper
         run: |
           python scraper.py > answers.json
+          echo "Scraper completed. Output:"
+          cat answers.json
 
       - name: Compute date label
         id: meta
@@ -41,3 +43,5 @@ jobs:
           file_pattern: answers.json
           commit_user_name: github-actions[bot]
           commit_user_email: 41898282+github-actions[bot]@users.noreply.github.com
+          skip_dirty_check: false
+          skip_fetch: false

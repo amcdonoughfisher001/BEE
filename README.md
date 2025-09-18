@@ -1,5 +1,7 @@
 # NYT Spelling Bee Answers Scraper (Python + GitHub Actions)
 
+[![Daily Scraper](https://github.com/amcdonoughfisher001/BEE/actions/workflows/run_scraper.yml/badge.svg)](https://github.com/amcdonoughfisher001/BEE/actions/workflows/run_scraper.yml)
+
 This repository automates scraping the daily NYT Spelling Bee answers and publishes them to `answers.json` at the repository root. It uses a resilient, multi-source approach with graceful fallbacks and deductive logic to determine the seven letters, center letter, and pangrams.
 
 ## What you get
@@ -125,6 +127,15 @@ If there are no changes to `answers.json`, the commit step will no-op.
 - Commit not pushed:
   - Ensure `permissions: contents: write` is present in the workflow.
   - Confirm your default branch is not protected in a way that blocks the bot.
+
+---
+
+## Monitoring
+
+- **Workflow Status**: The badge at the top of this README shows the status of the last automated run.
+- **Manual Execution**: You can manually trigger the scraper by going to the Actions tab and clicking "Run workflow" on the "Run NYT Spelling Bee Scraper" workflow.
+- **View Results**: Check the `answers.json` file in the repository root for the latest results.
+- **Workflow History**: Visit the [Actions tab](../../actions/workflows/run_scraper.yml) to see all previous runs and their logs.
 
 ---
 
