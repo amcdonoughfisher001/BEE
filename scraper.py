@@ -60,7 +60,9 @@ COMMON_BLOCKLIST = {
     'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY', 'TIMES', 'NEWS', 'YORK', 'SOLUTION',
     'COMMENTS', 'REPLY', 'EMAIL', 'WEBSITE', 'SUBSCRIBE', 'LOGIN', 'LOGOUT', 'REGISTER', 'SEARCH', 'POST', 'EDIT', 'DELETE', 'UPDATE', 'VIEW', 'SHARE',
     'USER', 'ADMIN', 'FORUM', 'BLOG', 'ARCHIVE', 'SOLVER', 'HINT', 'PRIME', 'FINDER', 'SBHINTS', 'SBANSWERS', 'SBARCHIVE', 'TECHWISER', 'GUIDE',
-    'COPYRIGHT', 'POLICY', 'CONTACT', 'ABOUT', 'PRIVACY', 'TERMS', 'SERVICE', 'FOLLOW'
+    'COPYRIGHT', 'POLICY', 'CONTACT', 'ABOUT', 'PRIVACY', 'TERMS', 'SERVICE', 'FOLLOW',
+    'FACEBOOK', 'TWITTER', 'REDDIT', 'YOUTUBE', 'WHATSAPP', 'PINTEREST', 'LINKEDIN', 'INSTAGRAM', 'TIKTOK',
+    'PRINT', 'WINDOW', 'ALWAYS', 'WELL', 'WHAT', 'THERE', 'FRIEND', 'FREE', 'POSTED'
 }
 
 # -----------------------------
@@ -136,16 +138,34 @@ def generic_structured_parser(html: str) -> Dict[str, List[str]]:
     answers: List[str] = []
     try:
         soup = BeautifulSoup(html, "html.parser")
-        for li in soup.find_all("li"):
-            text = li.get_text(separator=" ", strip=True)
-            if not text:
-                continue
-            w = text.strip().upper()
-            # keep only pure A-Z tokens in a list item (split in case of multiple words)
-            tokens = [t for t in re.findall(r"\b[A-Z]{4,15}\b", w)]
-            for t in tokens:
-                if is_spelling_bee_word(t):
-                    answers.append(t)
+        # Target content areas to avoid UI junk
+        content = soup.find("article") or soup.find("main") or soup.find(class_="entry-content") or soup.find(class_="post-content")
+        if not content or not content.get_text(strip=True):
+            content = soup
+
+        # Remove "Word Frequency" section if it exists
+        for junk in content.find_all(['h2', 'h3', 'h4', 'h5', 'h6', 'p', 'div']):
+            if "Word Frequency" in junk.get_text():
+                for sibling in junk.find_next_siblings():
+                    sibling.decompose()
+                junk.decompose()
+                break
+
+        # Unwrap inline tags to avoid breaking words like P<span class="center">A</span>PPY
+        for inline_tag in content.find_all(['span', 'b', 'i', 'strong', 'em', 'a']):
+            inline_tag.unwrap()
+
+        for li in content.find_all("li"):
+            text = li.get_text(strip=True)
+            if is_spelling_bee_word(text):
+                answers.append(text.upper())
+            else:
+                # If not a single word, try to find words within it
+                text_with_spaces = li.get_text(separator=" ", strip=True)
+                tokens = [t for t in re.findall(r"\b[a-zA-Z]{4,15}\b", text_with_spaces)]
+                for t in tokens:
+                    if is_spelling_bee_word(t):
+                        answers.append(t.upper())
     except Exception:
         # ignore parsing errors
         pass
@@ -154,13 +174,22 @@ def generic_structured_parser(html: str) -> Dict[str, List[str]]:
 def generic_regex_parser(html: str) -> Dict[str, List[str]]:
     answers: List[str] = []
     try:
-        # Pull text for more signal, then scan for uppercase words
+        # Pull text for more signal, then scan for words
         soup = BeautifulSoup(html, "html.parser")
-        text = soup.get_text(separator=" ").upper()
-        words = re.findall(r"\b[A-Z]{4,15}\b", text)
+        # Target content areas to avoid UI junk
+        content = soup.find("article") or soup.find("main") or soup.find(class_="entry-content") or soup.find(class_="post-content")
+        if not content or not content.get_text(strip=True):
+            content = soup
+
+        # Unwrap inline tags to avoid breaking words like P<span class="center">A</span>PPY
+        for inline_tag in content.find_all(['span', 'b', 'i', 'strong', 'em', 'a']):
+            inline_tag.unwrap()
+
+        text = content.get_text(separator=" ")
+        words = re.findall(r"\b[a-zA-Z]{4,15}\b", text)
         for w in words:
             if is_spelling_bee_word(w):
-                answers.append(w)
+                answers.append(w.upper())
     except Exception:
         pass
     return {"answers": unique_preserve_order(answers)}
@@ -172,38 +201,62 @@ def validate_result(result: Optional[Dict[str, List[str]]]) -> bool:
 # Deductive logic
 # -----------------------------
 
-def find_center_letter(answers: List[str]) -> Optional[str]:
+def deduce_puzzle_info(answers: List[str]) -> Tuple[str, str, List[str]]:
+    """
+    Given a list of candidate words (possibly with noise),
+    find the best-fit Spelling Bee puzzle info (letters, center, pangrams).
+    Returns (letters, center, filtered_answers).
+    """
     if not answers:
-        return None
-    first = answers[0]
-    # preserve order of appearance in first word but unique
-    seen = set()
-    first_letters = []
-    for ch in first:
-        if ch not in seen:
-            seen.add(ch)
-            first_letters.append(ch)
-    for letter in first_letters:
-        if all(letter in w for w in answers):
-            return letter
-    return None
+        return "", "", []
 
-def find_all_letters(answers: List[str]) -> Optional[str]:
-    if not answers or len(answers) < 10:
-        return None
-    counts: Dict[str, int] = {}
+    # Count how many words each letter appears in
+    letter_counts = {}
     for word in answers:
-        for ch in word:
-            if ch in string.ascii_uppercase:
-                counts[ch] = counts.get(ch, 0) + 1
-    if not counts:
-        return None
-    # Sort by frequency desc, then alphabetically to stabilize ties
-    sorted_letters = sorted(counts.keys(), key=lambda c: (-counts[c], c))
-    if len(sorted_letters) >= 7:
-        top7 = sorted(sorted_letters[:7])
-        return "".join(top7)
-    return None
+        for char in set(word):
+            if char in string.ascii_uppercase:
+                letter_counts[char] = letter_counts.get(char, 0) + 1
+
+    if not letter_counts:
+        return "", "", []
+
+    # Sort letters by frequency
+    sorted_chars = sorted(letter_counts.keys(), key=lambda c: (-letter_counts[c], c))
+
+    best_filtered_answers: List[str] = []
+    best_letters = ""
+    best_center = ""
+
+    # Try all letters that appear in enough words as potential center candidates
+    for center_candidate in sorted_chars:
+        # Filter words that contain this center letter
+        candidates = [w for w in answers if center_candidate in w]
+        if len(candidates) < 15 and len(candidates) <= len(best_filtered_answers):
+            continue
+
+        # For these candidates, find the set of letters that covers most of them
+        char_freq_in_candidates = {}
+        for w in candidates:
+            for char in set(w):
+                char_freq_in_candidates[char] = char_freq_in_candidates.get(char, 0) + 1
+
+        sorted_chars_in_candidates = sorted(char_freq_in_candidates.keys(), key=lambda c: (-char_freq_in_candidates[c], c))
+
+        if len(sorted_chars_in_candidates) < 7:
+            continue
+
+        puzzle_letters = sorted(sorted_chars_in_candidates[:7])
+        puzzle_letters_set = set(puzzle_letters)
+
+        # Final filtering: words that ONLY use these 7 letters AND contain the center
+        valid_answers = [w for w in candidates if set(w).issubset(puzzle_letters_set)]
+
+        if len(valid_answers) > len(best_filtered_answers):
+            best_filtered_answers = valid_answers
+            best_letters = "".join(puzzle_letters)
+            best_center = center_candidate
+
+    return best_letters, best_center, best_filtered_answers
 
 def find_pangrams(answers: List[str], letters: Optional[str]) -> List[str]:
     if not answers or not letters or len(letters) != 7:
@@ -305,9 +358,7 @@ def scrape_for_date(d: date_cls) -> Tuple[Optional[Dict], List[str]]:
             rand_sleep(1500, 3000)
 
     if best_result:
-        answers = [w.upper() for w in best_result["answers"]]
-        center = find_center_letter(answers) or ""
-        letters = find_all_letters(answers) or ""
+        letters, center, answers = deduce_puzzle_info(best_result["answers"])
         pangrams = find_pangrams(answers, letters)
         # Deduplicate and sort for stable output
         answers = sorted(unique_preserve_order(answers))
